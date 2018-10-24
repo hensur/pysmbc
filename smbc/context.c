@@ -114,19 +114,70 @@ static int
 Context_init (Context *self, PyObject *args, PyObject *kwds)
 {
   PyObject *auth = NULL;
+  char *proto = "SMB3";
   int debug = 0;
   SMBCCTX *ctx;
   static char *kwlist[] =
     {
       "auth_fn",
+      "proto",
       "debug",
       NULL
     };
 
-  if (!PyArg_ParseTupleAndKeywords (args, kwds, "|Oi", kwlist,
-				    &auth, &debug))
-    {
+  PyObject *items = PyDict_Keys(kwds);
+  PyObject *iterator = PyObject_GetIter(items);
+
+  if (iterator != NULL) {
+    PyObject *key;
+    char *keyString;
+    while ((key = PyIter_Next(iterator)) != NULL) {
+      keyString = PyBytes_AsString(PyUnicode_AsASCIIString(key));
+
+      // check if option is a wanted keyword
+      for (size_t k = 0; k < 3; k++) {
+        if (strcmp(kwlist[k], keyString) == 0) {
+          goto next;
+        }
+      }
+
+      PyObject *val = PyDict_GetItem(kwds, key);
+      if (val == NULL) {
+        continue;
+      }
+
+      // map python keyword to smb option by replacing underscore with spaces
+      char *valString = PyBytes_AsString(PyUnicode_AsASCIIString(val));
+      for (int j = 0; keyString[j] != '\0'; j++){
+        if (keyString[j] == '_') {
+          keyString[j] = ' ';
+        }
+      }
+
+      lp_set_cmdline(keyString, valString);
+      debugprintf("-> Setting %s to %s()\n", keyString, valString);
+
+      if (val != NULL) {
+        PyDict_DelItem(kwds, key);
+      }
+
+      next:
+      Py_DECREF(key);
+      Py_DECREF(val);
+    }
+
+    Py_DECREF(iterator);
+
+    if (PyErr_Occurred()) {
+      PyErr_SetString(PyExc_TypeError, "could not parse context options");
       return -1;
+    }
+  }
+
+  if (!PyArg_ParseTupleAndKeywords (args, kwds, "|Osi", kwlist,
+				    &auth, &proto, &debug))
+    {
+       return -1;
     }
 
   if (auth)
@@ -141,8 +192,8 @@ Context_init (Context *self, PyObject *args, PyObject *kwds)
       self->auth_fn = auth;
     }
 	
-  debugprintf ("-> Setting  client max protocol to SMB3()\n");
-  lp_set_cmdline("client max protocol", "SMB3");
+  debugprintf ("-> Setting client max protocol to %s()\n", proto);
+  lp_set_cmdline("client max protocol", proto);
 
   debugprintf ("-> Context_init ()\n");
 
